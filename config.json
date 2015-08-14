@@ -13,9 +13,9 @@
     "organisms": [
         "homo sapiens",
         "mus musculus",
-        "gallus gallus"
+        "pan troglodytes"
     ],
-    "targetOddsThreshold": 1.5,
+    "targetOddsThreshold": 1.2,
     "diffExpressedDataPath": "data/H5N1_VN1203_DE_Probes.txt",
     "universeDataPath": "data/H5N1_VN1203_UNIVERSE_Probes.txt",
     "pathwaysDataPath": "data/KEGG_Pathway_Genes.txt"

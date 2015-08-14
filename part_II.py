@@ -50,9 +50,9 @@ def getUserInput(valid, prompt):
 		valid 		- Required 	: regex to validate against (Rgx)
 	Returns: dicts (List)
 	"""
-	email = raw_input(prompt)
-	if Rgx.match(valid, email):
-		return email
+	response = raw_input(prompt)
+	if Rgx.match(valid, response):
+		return response
 	else:
 		print "Error: invalid input"
 		getUserInput(valid, prompt)
