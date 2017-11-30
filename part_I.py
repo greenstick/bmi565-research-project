@@ -180,7 +180,7 @@ def oddsRatioThreshold(pMetaData, threshold=1.0):
 			pathway["threshold"] = threshold
 			passedThreshold.append(pathway)
 	for pathway in passedThreshold:
-		print "Status: target pathway -", pathway["id"], "-", pathway["desc"]
+		print("Status: target pathway -", pathway["id"], "-", pathway["desc"])
 	return passedThreshold
 
 # 
@@ -188,11 +188,11 @@ def oddsRatioThreshold(pMetaData, threshold=1.0):
 # 
 
 if __name__ == "__main__":
-	print "\nStatus: part_I.py initialized from commandline\n"
+	print("\nStatus: part_I.py initialized from commandline\n")
 	exitCode 						= 0
 	try:
 		# Parse Config & Set Global Variables
-		print "Status: configuring"
+		print("Status: configuring")
 		config 					= parseJSONToDicts("config.json")
 		diffExpressedDataPath 	= config["diffExpressedDataPath"]
 		universeDataPath 		= config["universeDataPath"]
@@ -203,14 +203,14 @@ if __name__ == "__main__":
 		statsDirectory 			= config["statsDirectory"]
 		groups 					= config["groups"]
 		targetOddsThreshold 	= config["targetOddsThreshold"]
-		print "Status: differentially expressed genes data location - ", diffExpressedDataPath
-		print "Status: universe genes data location - ", universeDataPath
-		print "Status: KEGG pathways data location - ", pathwaysDataPath
-		print "Status: done\n"
+		print("Status: differentially expressed genes data location - ", diffExpressedDataPath)
+		print("Status: universe genes data location - ", universeDataPath)
+		print("Status: KEGG pathways data location - ", pathwaysDataPath)
+		print("Status: done\n")
 	except:
-		print ("Error: unable to configure part I of workflow; try validating config.json\n")
+		print("Error: unable to configure part I of workflow; try validating config.json\n")
 		S.exit(exitCode)
-	print "Status: building directory structure"
+	print("Status: building directory structure")
 	try: 
 		# Scaffold Directory
 		makeDirectories(outputDirectory)
@@ -219,18 +219,18 @@ if __name__ == "__main__":
 		makeDirectories(outputDirectory + "/" + statsDirectory)	
 		for group in groups:
 			makeDirectories(outputDirectory + "/" + geneDirectory + "/" + group)
-		print "Status: done\n"
+		print("Status: done\n")
 	except:
-		print ("Error: unable scaffold directory structure\n")
+		print("Error: unable scaffold directory structure\n")
 		S.exit(exitCode)
-	print "Status: beginning initial assessment"
+	print("Status: beginning initial assessment")
 	try:
 		# Set Data
 		deData 					= setData(diffExpressedDataPath)
 		universeData 			= setData(universeDataPath)
 		pathwayData, columns 	= setPathwayData(pathwaysDataPath)
 	except:
-		print ("Error: unable to retrieve data files, ensure directory paths in config.json are correct\n")
+		print("Error: unable to retrieve data files, ensure directory paths in config.json are correct\n")
 		S.exit(exitCode)
 	try:
 		# Perform Set Computations & Generate Pathway Meta Data
@@ -238,16 +238,16 @@ if __name__ == "__main__":
 		universeGenes 			= getUniqueGenes(universeData, key="gene", returnList=True)
 		pathwayMetaData 		= generateMetaData(deGenes=deGenes, universeGenes=universeGenes, pathwayData=pathwayData, pathwayIdKey="KEGG PATHWAY ID", pathwayDescKey="KEGG PATHWAY TITLE", pathwayMemKey="PATHWAY MEMBERS")
 	except:
-		print ("Error: unable to generate pathway meta analysis data\n")
+		print("Error: unable to generate pathway meta analysis data\n")
 		S.exit(exitCode)
 	try: 
 		# Set Target Pathways and Save
 		targetPathways 			= oddsRatioThreshold(pathwayMetaData, targetOddsThreshold)
 		writeJSON(targetPathways, outputDirectory + "/targetpathways.json")
-		print "Status: target pathways saved to", outputDirectory + "/targetpathways.json"
-		print "Status: done\n"
+		print("Status: target pathways saved to", outputDirectory + "/targetpathways.json")
+		print("Status: done\n")
 	except: 
-		print ("Error: unable to save target pathways data\n")
+		print("Error: unable to save target pathways data\n")
 		S.exit(exitCode)
 	exitCode = 1
 	S.exit(exitCode)

@@ -1,5 +1,4 @@
-#! /usr/bin/env python
-# -*- coding: utf-8 -*-
+#! /usr/bin/env python3
 
 """
 Developed With Python Version 2.7.8 by Benjamin Cordier
@@ -9,9 +8,9 @@ Refer to config.json dictionary for setup variables
 Part II of workflow:
 	- Parses targetpathways.json to dictionary
 	- Formats Entrez queries to database for organisms and genes
-	- Retrieves sequence IDs using formatted queries
-	- Retrieves sequence files using retrieved sequence IDs
-	- Performs multiple sequence alignment on genes using clustalW
+	- Retrieves gene sequence IDs using formatted queries at specified evidence levels
+	- Retrieves gene sequence files using retrieved sequence IDs
+	- Performs multiple sequence alignment on genes using clustalW2
 	- Computes Hamming distances and a normalized score for each gene
 	- Performs statistical analysis using Mann-Whitney U test
 	- Saves boxplots of distribution of scores by group (i.e. differentially expressed or not)
@@ -33,10 +32,13 @@ import numpy 												as Npy
 import matplotlib.pyplot 									as Plot
 import json 												as JSON
 import scipy.stats 											as Stats
+from multiprocessing        	import Pool, cpu_count
+from functools              	import partial
 from Bio 						import Entrez 				as E
 from Bio.Align.Applications 	import ClustalwCommandline	as ClustalW
 from Bio 						import AlignIO
 
+import time
 # 
 # Utility Methods
 # 
@@ -50,11 +52,11 @@ def getUserInput(valid, prompt):
 		valid 		- Required 	: regex to validate against (Rgx)
 	Returns: dicts (List)
 	"""
-	response = raw_input(prompt)
+	response = input(prompt)
 	if Rgx.match(valid, response):
 		return response
 	else:
-		print "Error: invalid input"
+		print("Error: invalid input")
 		getUserInput(valid, prompt)
 
 
@@ -104,6 +106,29 @@ def writeOutput(data, path="output/output.txt", stdout=False):
 			file.close()
 	return path
 
+# Apply function to list in parallel
+def applyParallelList (data = None, function = None, arguments = None, processes = None):
+    """
+    Parallelize function across list
+    @params:
+        data        : Required  - Pandas DataFrame  - List to apply function to
+        function    : Required  - Reference         - Pre-defined function to call on data
+        arguments   : Optional  - Tuple             - Tuple of ordered arguments for function
+        processes   : Optional  - Integer           - Number of processors to use (defaults to cpu_count())
+    @return:
+        result      : Recombined data with the function performed on it
+    """
+    processes   = cpu_count() if processes is None else processes
+    length      = len(data)
+    grouped     = [data[i * (length // processes): (i + 1) * (length // processes)] for i in range(0, processes)]
+    with Pool(processes) as pool:
+        if arguments is None:
+            resultList  = pool.map(partial(function), [group for group in grouped])
+        else:
+            resultList  = pool.map(partial(function, **arguments), [group for group in grouped])
+    result      = sum([list(result) for result in resultList], [])
+    return result
+
 # 
 # Database Query Methods
 # 
@@ -122,7 +147,7 @@ def formatQuery(pathways, geneKey="genes", selection="*", organisms=["homo sapie
 	Returns: queries (List of Dicts)
 	"""
 	queries = []
-	print "\nStatus: formatting database queries"
+	print("\nStatus: formatting database queries")
 	for organism in organisms:
 		if selection == "*":
 			for pathway in pathways:
@@ -152,11 +177,13 @@ def formatQuery(pathways, geneKey="genes", selection="*", organisms=["homo sapie
 					"seqFilter" : seqFilter, 
 					"query" 	: gene + "[Gene] AND " + organism + "[Organism] AND " + type + "[Filter] AND " + seqFilter + "[Filter]"
 				})
-	print "Status: done\n"
+	# Sort Queries By Gene
+	queries.sort(key = lambda x: x["gene"])
+	print("Status: done\n")
 	return queries
 
 # Query database for sequence records
-def getSequenceRecords(queries, db="nuccore", retmax=1):
+def getSequenceRecords(queries, evidenceLevels=["known"], db="nuccore", retmax=1):
 	"""
 	Query database for sequence records
 	@params:
@@ -166,24 +193,19 @@ def getSequenceRecords(queries, db="nuccore", retmax=1):
 	Returns: records (List of Dicts)
 	"""
 	tempRecords, validate, records = [], [], []
+	# parallelArgs = {
+	# 	"evidenceLevels" 	: evidenceLevels,
+	# 	"db" 				: db,
+	# 	"retmax" 			: retmax,
+	# 	"i" 				: 0
+	# }
+	# tempRecords = applyParallelList(queries, function=__getSequenceRecord__, arguments=parallelArgs, processes=ncores)
 	for query in queries:
-		try:
-			print "Status: querying",db,"database reviewed -",query["gene"],query["organism"]
-			asciiQuery = query["query"].encode('ascii')
-			search = E.esearch(db=db, term=asciiQuery + "AND srcdb​_refseq_reviewed[Prop]", retmax=retmax)
-			record = E.read(search)
-			search.close()
-			if len(record["IdList"]) > 0:
-				tempRecords.append({
-					"gene" 		: query["gene"], 
-					"organism"	: query["organism"], 
-					"record" 	: record
-				})
-				print "Status: query returned " + record["Count"] + " record(s)"
-			else:
-				print "Status: no reviewed records"
-				print "Status: querying",db,"database validated -",query["gene"],query["organism"]
-				search = E.esearch(db=db, term=asciiQuery + "AND srcdb​_refseq_validated[Prop]", retmax=retmax)
+		for evidenceLevel in evidenceLevels:
+			fullQuery = query["query"] + " AND srcdb_refseq_" + evidenceLevel + "[Prop]"
+			try:
+				print("Status: querying",db,"database -",query["gene"],query["organism"],evidenceLevel)
+				search = E.esearch(db=db, term=fullQuery, retmax=retmax)
 				record = E.read(search)
 				search.close()
 				if len(record["IdList"]) > 0:
@@ -192,13 +214,13 @@ def getSequenceRecords(queries, db="nuccore", retmax=1):
 						"organism"	: query["organism"], 
 						"record" 	: record
 					})
-					print "Status: query returned " + record["Count"] + " record(s)"
+					print("Status: query returned",record["Count"],evidenceLevel,"record(s)")
 				else:
-					print "Status: no validated records" 
-		except:
-			print "Status: request failed on query \"",query["gene"],query["organism"],"\""
-		print "Status: done\n"
-	print "Status: requests complete, cleaning up records . . ."
+					print("Status: no",evidenceLevel,"records")
+			except:
+				print("Status: request failed on query: " + fullQuery)
+		print("Status: done\n")
+	print("Status: requests complete, cleaning up records . . .")
 	# Removing gene records that are incomplete across organisms
 	for organism in query["organisms"]:
 		unique = {record["gene"] for record in tempRecords if record["organism"] == organism}
@@ -209,8 +231,32 @@ def getSequenceRecords(queries, db="nuccore", retmax=1):
 			if record["gene"] == gene:
 				records.append(record)
 	if len(records) == 0:
-		print "Status: No gene records shared between selected organisms"
-	print "Status: done\n"
+		print("Warning: No gene records shared between selected organisms")
+	print("Status: done\n")
+	return records
+
+def __getSequenceRecord__(queries, evidenceLevels = ["known"], db = "nuccore", retmax = 1, i = 0):
+	records = []
+	for query in queries:
+		for evidenceLevel in evidenceLevels:
+			fullQuery = query["query"] + " AND srcdb_refseq_" + evidenceLevel + "[Prop]"
+			try:
+				print("Status: querying",db,"database -",query["gene"],query["organism"],evidenceLevel)
+				search = E.esearch(db=db, term=fullQuery, retmax=retmax)
+				record = E.read(search)
+				search.close()
+				if len(record["IdList"]) > 0:
+					records.append({
+						"gene" 		: query["gene"], 
+						"organism"	: query["organism"], 
+						"record" 	: record
+					})
+					print("Status: query returned",record["Count"],evidenceLevel,"record(s)")
+				else:
+					print("Status: no",evidenceLevel,"records")
+			except:
+				print("Status: request failed on query: " + fullQuery)
+		print("Status: done\n")
 	return records
 
 # Query database for sequences using record IDs
@@ -226,7 +272,7 @@ def getSequences(records, db="nuccore", path="outputs/genes/"):
 	total, i 			= 0, 1
 	genes 				= set()
 	errors, sequences 	= [], []
-	print "Status: retrieving sequences from", db, "database"
+	print("Status: retrieving sequences from", db, "database")
 	for record in records:
 		genes.add(record["gene"])
 		total += len(record["record"]["IdList"])
@@ -234,18 +280,20 @@ def getSequences(records, db="nuccore", path="outputs/genes/"):
 		geneSequences = set()
 		for record in records:
 			if record["gene"] == gene:
+				# The commented code will 
+				# geneSequences = geneSequences + applyParallelList(record["record"]["IdList"], function = __getSequenceID__, arguments = (i), processes = ncores)
 				for Id in record["record"]["IdList"]:
 					try:
-						print "Status: queue position: ",i,"of",total,"queries\nStatus: requesting sequence ID:",Id,". . ."
+						print("Status: queue position: ",i,"of",total,"queries\nStatus: requesting sequence ID:",Id,". . .")
 						response 	= E.efetch(db=db, id=Id, rettype="fasta", retmode="text")
 						fasta 		= response.read()
 						response.close()
 						geneSequences.add(fasta)
-						print "Status: request success"
+						print("Status: request success")
 					except:
-						print "Status: request failed on ID: \"",Id,"\""
+						print("Status: request failed on ID: \"",Id,"\"")
 						errors.append(Id)
-					print "Status: request done\n"
+					print("Status: request done\n")
 					i += 1
 		writeOutput(geneSequences, path=path + gene + ".fasta")
 		sequences.append({
@@ -253,10 +301,34 @@ def getSequences(records, db="nuccore", path="outputs/genes/"):
 			"path": path + gene + ".fasta"
 		})
 	if len(errors) == 0:
-		print "Status: request series completed successfully\n"
+		print("Status: request series completed successfully\n")
 	else:
-		print "Status: request series completed with", len(errors), "errors\n"
+		print("Status: request series completed with", len(errors), "errors\n")
 	return sequences, errors
+
+def __getSequenceByID__ (ids, i = 0):
+	"""
+	Internal Function: Query database for sequences using record IDs
+	To be applied in parallel to a list
+	@params:
+		id 					- Required  : list of ids (List)
+		i 					- Required  : index
+	Returns: geneSequences (List fasta files)
+	"""
+	for ID in ids:
+		try:
+			print("Status: queue position:", i, "of", total, "queries\nStatus: requesting sequence ID:", ID, ". . .")
+			response 	= E.efetch(db=db, id=ID, rettype="fasta", retmode="text")
+			fasta 		= response.read()
+			response.close()
+			geneSequences.add(fasta)
+			print("Status: request success")
+		except:
+			print("Status: request failed on ID: \"",ID,"\"")
+		print("Status: request done\n")
+		# Increment i reference (side effect)
+		i += 1
+	return geneSequences
 
 # 
 # Alignment Methods
@@ -272,7 +344,7 @@ def msaSequences(sequences):
 	"""
 	outputs, errors = [], []
 	i, l			= 1, len(sequences)
-	print "Status: starting multiple sequence alignment\n"
+	print("Status: starting multiple sequence alignment\n")
 	for sequence in sequences:
 		command 		= ClustalW("clustalw2", infile=sequence["path"])
 		output, error 	= command()
@@ -282,12 +354,12 @@ def msaSequences(sequences):
 		})
 		if len(error) > 0:
 			errors.append(error)
-		print "Status:", sequence["gene"], "alignment complete -", i, "of", l
+		print("Status:", sequence["gene"], "alignment complete -", i, "of", l)
 		i += 1
 	if len(errors) > 0:
-		print "\nStatus: alignments completed with", len(errors), "errors\n"
+		print("\nStatus: alignments completed with", len(errors), "errors\n")
 	else: 
-		print "\nStatus: alignments completed without errors\n"
+		print("\nStatus: alignments completed without errors\n")
 	return outputs, errors
 
 # 
@@ -304,10 +376,10 @@ def getHammingScore(outputs, path="outputs/scores/"):
 	Returns: hammingStatistics (List of Dicts)
 	"""
 	hammingStatistics = []
-	print "Status: calculating hamming distances\n"
+	print("Status: calculating hamming distances\n")
 	for alignments in outputs: 
 		for aligned in alignments:
-			print "Status: calculating hamming distance for", aligned["gene"]
+			print("Status: calculating hamming distance for", aligned["gene"])
 			alignment = AlignIO.read(path + aligned["gene"] + ".aln", "clustal")
 			columns = []
 			i 		= 0
@@ -328,8 +400,8 @@ def getHammingScore(outputs, path="outputs/scores/"):
 				"hamming"	: hammingDistance,
 				"score" 	: hammingScore
 			})
-			print "Status: done\n"
-	print "Status: hamming calculations done\n"
+			print("Status: done\n")
+	print("Status: hamming calculations done\n")
 	return hammingStatistics
 
 # Compute p-value using Mann-Whitney U text
@@ -380,10 +452,10 @@ def generateBoxPlots(analysis, path="outputs/"):
 # 
 
 if __name__ == "__main__":
-	print "Status: part_II.py initialized from commandline\n"
+	print("Status: part_II.py initialized from commandline\n")
 	exitCode 	= 0
 	E.email		= getUserInput(valid=r"[^@]+@[^@]+\.[^@]+", prompt="Input: enter email for Entrez queries: ")
-	print "Status: configuring"
+	print("Status: configuring")
 	try:
 		# Parse Config & Set Global Variables
 		config 				= parseJSONToDicts("config.json")
@@ -393,33 +465,35 @@ if __name__ == "__main__":
 		scoreDirectory 		= config["scoreDirectory"]
 		statsDirectory 		= config["statsDirectory"]
 		organisms 			= config["organisms"]
+		evidenceLevels 		= config["evidenceLevels"]
+		debug 				= config["debug"]
 		pathways 			= parseJSONToDicts(outputDirectory + "/targetpathways.json")
 		statistics 			= []
 		option 				= 0
 		numOptions 			= str(len(pathways) - 1)
-		print "Status: done\n"
+		print("Status: done\n")
 	except:
-		print ("Error: unable to configure part II of workflow\n")
+		print(("Error: unable to configure part II of workflow\n"))
 		S.exit(exitCode)
 	# User Target Pathway Selection
-	print "Input: select pathway for analysis (0 - " + numOptions + "):"
+	print("Input: select pathway for analysis (0 - " + numOptions + "):")
 	for pathway in pathways:
-		print "	Option:", "[", option, "]", pathway["id"], "-", pathway["desc"]
+		print("	Option:", "[", option, "]", pathway["id"], "-", pathway["desc"])
 		option += 1
-	selection = getUserInput(valid=r"[0-9]{1,2}", prompt="Input: enter [ n ] to perform analysis on pathway or [ * ] to analyze all pathways: ")
-	print "Status: input received"
-	# try:
+	selection 	= getUserInput(valid=r"([0-9]{1,2}|\*)", prompt="Input: enter [ n ] to perform analysis on pathway or [ * ] to analyze all pathways: ")
+	ncores 		= int(getUserInput(valid=r"[1-9]{1}[0-9]{0,1}", prompt="Input: enter [ n ] number of cores: "))
+	print("Status: input received")
 	# Core Workflow
 	for group in config["groups"]:
 		groupDirectory 		= group
 		queries 			= formatQuery(pathways, geneKey=group, selection=selection, organisms=organisms, type="mRNA", seqFilter="RefSeq")
-		sequenceRecords 	= getSequenceRecords(queries, db=db)
+		sequenceRecords 	= getSequenceRecords(queries, evidenceLevels=evidenceLevels, db=db)
 		sequences, errs 	= getSequences(sequenceRecords, db=db, path=outputDirectory + "/" + geneDirectory + "/" + groupDirectory + "/")
 		alignments 			= msaSequences(sequences)
 		hammingStatistics 	= getHammingScore(alignments, path=outputDirectory + "/" + geneDirectory + "/" + groupDirectory + "/")
 		# Write Scores 
 		writeJSON(hammingStatistics, path=outputDirectory + "/" + scoreDirectory + "/" + db + "-" + groupDirectory + "-hammingstatistics.json")
-		print "Status: hamming statistics saved to", outputDirectory + "/" + scoreDirectory + "/" + db + "-" + groupDirectory + "-hammingstatistics.json"
+		print("Status: hamming statistics saved to", outputDirectory + "/" + scoreDirectory + "/" + db + "-" + groupDirectory + "-hammingstatistics.json")
 		statistics.append({
 			"group" : group,
 			"genes": hammingStatistics
@@ -431,13 +505,10 @@ if __name__ == "__main__":
 		"statistics" 	: statistics
 	}
 	writeJSON(analysis, path=outputDirectory + "/" + statsDirectory + "/analysis.json")
-	print "Status: analysis saved to", outputDirectory + "/" + statsDirectory + "/analysis.json\n"
+	print("Status: analysis saved to", outputDirectory + "/" + statsDirectory + "/analysis.json\n")
 	generateBoxPlots(analysis, path=outputDirectory + "/" + statsDirectory + "/")
-	print "Status: boxplots saved to", outputDirectory + "/" + statsDirectory + "/boxplots.png\n"
-	# except:
-	# 	print ("Error: unable to complete analysis\n")
-	# 	S.exit(exitCode)
-	print "Status: workflow completed successfully"
+	print("Status: boxplots saved to", outputDirectory + "/" + statsDirectory + "/boxplots.png\n")
+	print("Status: workflow completed successfully")
 	exitCode = 1
 	S.exit(exitCode)
 else:

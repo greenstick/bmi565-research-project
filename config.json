@@ -2,6 +2,7 @@
     "desc": "config",
     "email": "anonymous@ohsu.edu",
     "db": "nuccore",
+    "debug": true,
     "geneDirectory": "genes",
     "outputDirectory": "output",
     "scoreDirectory": "scores",
@@ -14,6 +15,9 @@
         "homo sapiens",
         "mus musculus",
         "pan troglodytes"
+    ],
+    "evidenceLevels": [
+        "known"
     ],
     "targetOddsThreshold": 1.2,
     "diffExpressedDataPath": "data/H5N1_VN1203_DE_Probes.txt",
