@@ -30,7 +30,7 @@ Config Dictionary Structure (config.json):
 	diffExpressedDataPath 	: (Str) 	- Path to file containing data on differentially expressed gene probes
 	universeDataPath	    : (Str) 	- Path to file containing data on all gene probes
 	upathwaysDataPath	    : (Str) 	- Path to file containing data on KEGG pathways
-    evidenceLevels          : (List)    - Strings representing levels of evidence to use in query, acceptable values include: known, reviewed, validated, providional, predicted, inferred
+    evidenceLevels          : (List)    - Strings representing levels of evidence to use in query, acceptable values include: known, reviewed, validated, provisional, predicted, inferred
 
 Default Settings of config.json:
 
