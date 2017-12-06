@@ -33,12 +33,13 @@ import matplotlib.pyplot 									as Plot
 import json 												as JSON
 import scipy.stats 											as Stats
 from multiprocessing        	import Pool, cpu_count
+from collections 				import defaultdict
 from functools              	import partial
 from Bio 						import Entrez 				as E
 from Bio.Align.Applications 	import ClustalwCommandline	as ClustalW
 from Bio 						import AlignIO
-
 import time
+
 # 
 # Utility Methods
 # 
@@ -119,15 +120,40 @@ def applyParallelList (data = None, function = None, arguments = None, processes
         result      : Recombined data with the function performed on it
     """
     processes   = cpu_count() if processes is None else processes
-    length      = len(data)
+    length   	= len(data)
     grouped     = [data[i * (length // processes): (i + 1) * (length // processes)] for i in range(0, processes)]
     with Pool(processes) as pool:
         if arguments is None:
-            resultList  = pool.map(partial(function), [group for group in grouped])
+            result 	= pool.map(partial(function), [group for group in grouped])
         else:
-            resultList  = pool.map(partial(function, **arguments), [group for group in grouped])
-    result      = sum([list(result) for result in resultList], [])
+            result  = pool.map(partial(function, **arguments), [group for group in grouped])
     return result
+
+# Print iterations progress
+def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, length = 50, fill = '█'):
+    """
+    Call in a loop to create terminal progress bar
+    @params:
+        iteration   - Required  : current iteration (Int)
+        total       - Required  : total iterations (Int)
+        prefix      - Optional  : prefix string (Str)
+        suffix      - Optional  : suffix string (Str)
+        decimals    - Optional  : positive number of decimals in percent complete (Int)
+        length      - Optional  : character length of bar (Int)
+        fill        - Optional  : bar fill character (Str)
+    """
+    import subprocess
+    import time
+    percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
+    filledLength = int(length * iteration // total)
+    bar = fill * filledLength + '-' * (length - filledLength)
+    out = '\r%s |%s| %s%% %s' % (prefix, bar, percent, suffix)
+    rows, columns = subprocess.check_output(['stty', 'size']).split()
+    out += " " * abs(len(out) - int(columns))
+    print(out, end = '\r')
+    # Print New Line on Complete
+    if iteration == total: 
+        print()
 
 # 
 # Database Query Methods
@@ -179,7 +205,6 @@ def formatQuery(pathways, geneKey="genes", selection="*", organisms=["homo sapie
 				})
 	# Sort Queries By Gene
 	queries.sort(key = lambda x: x["gene"])
-	print("Status: done\n")
 	return queries
 
 # Query database for sequence records
@@ -192,34 +217,30 @@ def getSequenceRecords(queries, evidenceLevels=["known"], db="nuccore", retmax=1
 		retmax 				- Optional 	: max number of records to retrieve
 	Returns: records (List of Dicts)
 	"""
+	print("Status: querying gene sequences in", db, "database")
 	tempRecords, validate, records = [], [], []
-	# parallelArgs = {
-	# 	"evidenceLevels" 	: evidenceLevels,
-	# 	"db" 				: db,
-	# 	"retmax" 			: retmax,
-	# 	"i" 				: 0
-	# }
-	# tempRecords = applyParallelList(queries, function=__getSequenceRecord__, arguments=parallelArgs, processes=ncores)
+	# Parallel function insertion point
+	i, l = 1, len(queries) * len(evidenceLevels)
 	for query in queries:
 		for evidenceLevel in evidenceLevels:
 			fullQuery = query["query"] + " AND srcdb_refseq_" + evidenceLevel + "[Prop]"
 			try:
-				print("Status: querying",db,"database -",query["gene"],query["organism"],evidenceLevel)
+				printProgressBar(i, l, prefix = 'Status:', suffix = '(%d/%d) querying %s database - %s:%s:%s' % (i, l, db, query["gene"], query["organism"], evidenceLevel))
 				search = E.esearch(db=db, term=fullQuery, retmax=retmax)
 				record = E.read(search)
 				search.close()
 				if len(record["IdList"]) > 0:
+					printProgressBar(i, l, prefix = 'Status:', suffix = '(%d/%d) query returned %s records – %s:%s:%s' % (i, l, record["Count"], query["gene"], query["organism"], evidenceLevel))
 					tempRecords.append({
 						"gene" 		: query["gene"], 
 						"organism"	: query["organism"], 
 						"record" 	: record
 					})
-					print("Status: query returned",record["Count"],evidenceLevel,"record(s)")
 				else:
-					print("Status: no",evidenceLevel,"records")
+					printProgressBar(i, l, prefix = 'Status:', suffix = '(%d/%d) no records returned - %s:%s:%s' % (i, l, query["gene"], query["organism"], evidenceLevel))
 			except:
-				print("Status: request failed on query: " + fullQuery)
-		print("Status: done\n")
+				printProgressBar(i, l, prefix = 'Status:', suffix = '(%d/%d) request failed on query: %s' % (i, l, fullQuery))
+			i += 1
 	print("Status: requests complete, cleaning up records . . .")
 	# Removing gene records that are incomplete across organisms
 	for organism in query["organisms"]:
@@ -227,14 +248,22 @@ def getSequenceRecords(queries, evidenceLevels=["known"], db="nuccore", retmax=1
 		validate.append(unique)
 	shared = set.intersection(*validate)
 	for record in tempRecords:
-		for gene in shared:
-			if record["gene"] == gene:
-				records.append(record)
+		if record["gene"] in shared:
+			records.append(record)
 	if len(records) == 0:
 		print("Warning: No gene records shared between selected organisms")
-	print("Status: done\n")
+	else:
+		print("Status: found %d gene records shared between selected organisms" % len(records))
 	return records
 
+# Parallelized Implementation
+# parallelArgs = {
+# 	"evidenceLevels" 	: evidenceLevels,
+# 	"db" 				: db,
+# 	"retmax" 			: retmax,
+# 	"i" 				: 0
+# }
+# tempRecords = applyParallelList(queries, function=__getSequenceRecord__, arguments=parallelArgs, processes=ncores)
 def __getSequenceRecord__(queries, evidenceLevels = ["known"], db = "nuccore", retmax = 1, i = 0):
 	records = []
 	for query in queries:
@@ -256,7 +285,7 @@ def __getSequenceRecord__(queries, evidenceLevels = ["known"], db = "nuccore", r
 					print("Status: no",evidenceLevel,"records")
 			except:
 				print("Status: request failed on query: " + fullQuery)
-		print("Status: done\n")
+		print("Status: done")
 	return records
 
 # Query database for sequences using record IDs
@@ -269,43 +298,40 @@ def getSequences(records, db="nuccore", path="outputs/genes/"):
 		path 				- Optional 	: output path for gene files (Str)
 	Returns: sequences (List of Dicts), errors (List of Strings)
 	"""
-	total, i 			= 0, 1
-	genes 				= set()
+	i, l = 1, sum([len(record["record"]["IdList"]) for record in records])
 	errors, sequences 	= [], []
-	print("Status: retrieving sequences from", db, "database")
+	print("\nStatus: retrieving sequences from", db, "database")
+	geneSequences = defaultdict(set)
+	# Request Fasta Sequences
 	for record in records:
-		genes.add(record["gene"])
-		total += len(record["record"]["IdList"])
-	for gene in genes:
-		geneSequences = set()
-		for record in records:
-			if record["gene"] == gene:
-				# The commented code will 
-				# geneSequences = geneSequences + applyParallelList(record["record"]["IdList"], function = __getSequenceID__, arguments = (i), processes = ncores)
-				for Id in record["record"]["IdList"]:
-					try:
-						print("Status: queue position: ",i,"of",total,"queries\nStatus: requesting sequence ID:",Id,". . .")
-						response 	= E.efetch(db=db, id=Id, rettype="fasta", retmode="text")
-						fasta 		= response.read()
-						response.close()
-						geneSequences.add(fasta)
-						print("Status: request success")
-					except:
-						print("Status: request failed on ID: \"",Id,"\"")
-						errors.append(Id)
-					print("Status: request done\n")
-					i += 1
-		writeOutput(geneSequences, path=path + gene + ".fasta")
+		for Id in record["record"]["IdList"]:
+			try:
+				printProgressBar(i, l, prefix = 'Status:', suffix = '(%d/%d) requesting – seq ID %s' % (i, l, Id))
+				response 	= E.efetch(db=db, id=Id, rettype="fasta", retmode="text")
+				fasta 		= response.read()
+				response.close()
+				geneSequences[record["gene"]].add(fasta)
+			except:
+				printProgressBar(i, l, prefix = 'Status:', suffix = '(%d/%d) request failed – seq ID %s' % (i, l, Id))
+				errors.append(Id)
+			else:
+				printProgressBar(i, l, prefix = 'Status:', suffix = '(%d/%d) success – seq ID %s' % (i, l, Id))
+			i += 1
+	# Write Combined Organism Sequences to FASTA
+	for gene, sequence in geneSequences.items():
+		writeOutput(sequence, path=path + gene + ".fasta")
 		sequences.append({
 			"gene": gene, 
 			"path": path + gene + ".fasta"
 		})
 	if len(errors) == 0:
-		print("Status: request series completed successfully\n")
+		print("Status: request series completed successfully")
 	else:
-		print("Status: request series completed with", len(errors), "errors\n")
+		print("Status: request series completed with", len(errors), "errors")
 	return sequences, errors
 
+# Parallelized Implementation
+# geneSequences = geneSequences + applyParallelList(record["record"]["IdList"], function = __getSequenceID__, arguments = (i), processes = ncores)
 def __getSequenceByID__ (ids, i = 0):
 	"""
 	Internal Function: Query database for sequences using record IDs
@@ -343,23 +369,46 @@ def msaSequences(sequences):
 	Returns: outputs (List of Dicts), errors (List of ClustalW Errors)
 	"""
 	outputs, errors = [], []
-	i, l			= 1, len(sequences)
-	print("Status: starting multiple sequence alignment\n")
+	i, l			= 0, len(sequences)
+	print("\nStatus: starting multiple sequence alignment")
+	# Parallel function insertion point
 	for sequence in sequences:
-		command 		= ClustalW("clustalw2", infile=sequence["path"])
-		output, error 	= command()
+		printProgressBar(i, l, prefix = 'Status:', suffix = '(%d/%d) aligning - %s ' % (i, l, sequence["gene"]))
+		output, error 	= ClustalW("clustalw2", infile=sequence["path"])()
 		outputs.append({
 			"gene" 	: sequence["gene"], 
 			"output": output
 		})
 		if len(error) > 0:
 			errors.append(error)
+		i += 1
+		printProgressBar(i, l, prefix = 'Status:', suffix = '(%d/%d) alignment complete - %s' % (i, l, sequence["gene"]))
+	if len(errors) > 0:
+		print("\nStatus: alignments completed with", len(errors), "errors")
+	else: 
+		print("\nStatus: alignments completed without errors")
+	return outputs, errors
+
+# Parallelized Implementation
+# result = applyParallelList(sequences, function=__msaSequence__, arguments={"i": i, "l": l}, processes=ncores)
+def __msaSequence__(sequences, i = 0):
+	"""
+	Internal Function: Query database for sequences using record IDs
+	To be applied in parallel to a list
+	@params:
+		id 					- Required  : list of ids (List)
+		i 					- Required  : index
+	Returns: geneSequences (List fasta files)
+	"""
+	outputs = []
+	for sequence in sequences:
+		output, error 	= ClustalW("clustalw2", infile=sequence["path"])()
+		outputs.append({
+			"gene" 	: sequence["gene"], 
+			"output": output
+		})
 		print("Status:", sequence["gene"], "alignment complete -", i, "of", l)
 		i += 1
-	if len(errors) > 0:
-		print("\nStatus: alignments completed with", len(errors), "errors\n")
-	else: 
-		print("\nStatus: alignments completed without errors\n")
 	return outputs, errors
 
 # 
@@ -367,41 +416,42 @@ def msaSequences(sequences):
 # 
 
 # Compute Hamming Distance and normalized Hamming Score
-def getHammingScore(outputs, path="outputs/scores/"):
+def getHammingScore(alignerOutput, path="outputs/scores/"):
 	"""
 	Compute Hamming Distance and normalized Hamming Score
 	@params:
-		outputs 			- Required 	: alignment outputs (List of Dicts)
+		alignerOutput 			- Required 	: alignments output from msaSequences() method (List of Dicts)
 		path 				- Optional 	: file output path (Str)
 	Returns: hammingStatistics (List of Dicts)
 	"""
 	hammingStatistics = []
-	print("Status: calculating hamming distances\n")
-	for alignments in outputs: 
-		for aligned in alignments:
-			print("Status: calculating hamming distance for", aligned["gene"])
-			alignment = AlignIO.read(path + aligned["gene"] + ".aln", "clustal")
-			columns = []
-			i 		= 0
-			count 	= len(alignment)
-			while i < len(alignment[0].seq):
-				columns.append(alignment[:, i])
-				i += 1
-			sequenceHamming = []
-			length 			= float(len(columns))
-			for column in columns:
-				l 		= set(column)
-				hamming = len(l) - 1
-				sequenceHamming.append(hamming)
-			hammingDistance = sum(sequenceHamming)
-			hammingScore 	= (hammingDistance / length) / count
-			hammingStatistics.append({
-				"gene" 		: aligned["gene"],
-				"hamming"	: hammingDistance,
-				"score" 	: hammingScore
-			})
-			print("Status: done\n")
-	print("Status: hamming calculations done\n")
+	print("\nStatus: calculating hamming distances")
+	i, l = 0, len(alignerOutput[0])
+	for aligned in alignerOutput[0]:
+		printProgressBar(i, l, prefix = 'Status:', suffix = '(%d/%d) calculating hamming distance - %s' % (i, l, aligned["gene"]))
+		alignment = AlignIO.read(path + aligned["gene"] + ".aln", "clustal")
+		columns = []
+		j 		= 0
+		count 	= len(alignment)
+		while j < len(alignment[0].seq):
+			columns.append(alignment[:,j])
+			j += 1
+		sequenceHamming = []
+		length 			= float(len(columns))
+		for column in columns:
+			unique 			= set(column)
+			hamming 		= len(unique) - 1
+			sequenceHamming.append(hamming)
+		hammingDistance = sum(sequenceHamming)
+		hammingScore 	= (hammingDistance / length) / count
+		hammingStatistics.append({
+			"gene" 		: aligned["gene"],
+			"hamming"	: hammingDistance,
+			"score" 	: hammingScore
+		})
+		i += 1
+		printProgressBar(i, l, prefix = 'Status:', suffix = '(%d/%d) calculated hamming distance - %s' % (i, l, aligned["gene"]))
+	print("\nStatus: hamming calculations done")
 	return hammingStatistics
 
 # Compute p-value using Mann-Whitney U text
@@ -421,6 +471,10 @@ def computeStatistics(statistics, path="outputs/"):
 		})
 	u, pValue = Stats.mannwhitneyu(scores[0]["score"], scores[1]["score"])
 	return u, pValue
+
+# 
+# Visualization
+# 
 
 # Generate box plots from hamming scores
 def generateBoxPlots(analysis, path="outputs/"):
@@ -454,11 +508,11 @@ def generateBoxPlots(analysis, path="outputs/"):
 if __name__ == "__main__":
 	print("Status: part_II.py initialized from commandline\n")
 	exitCode 	= 0
-	E.email		= getUserInput(valid=r"[^@]+@[^@]+\.[^@]+", prompt="Input: enter email for Entrez queries: ")
 	print("Status: configuring")
 	try:
 		# Parse Config & Set Global Variables
 		config 				= parseJSONToDicts("config.json")
+		email 				= config["email"]
 		db 					= config["db"]
 		outputDirectory 	= config["outputDirectory"]
 		geneDirectory 		= config["geneDirectory"]
@@ -467,6 +521,7 @@ if __name__ == "__main__":
 		organisms 			= config["organisms"]
 		evidenceLevels 		= config["evidenceLevels"]
 		debug 				= config["debug"]
+		uiProgressInterval 	= config["uiProgressInterval"]
 		pathways 			= parseJSONToDicts(outputDirectory + "/targetpathways.json")
 		statistics 			= []
 		option 				= 0
@@ -475,6 +530,10 @@ if __name__ == "__main__":
 	except:
 		print(("Error: unable to configure part II of workflow\n"))
 		S.exit(exitCode)
+	if Rgx.match(r"[^@]+@[^@]+\.[^@]+", email):
+		E.email = email
+	else:
+		E.email		= getUserInput(valid=r"[^@]+@[^@]+\.[^@]+", prompt="Input: enter email for Entrez queries: ")
 	# User Target Pathway Selection
 	print("Input: select pathway for analysis (0 - " + numOptions + "):")
 	for pathway in pathways:
@@ -485,6 +544,7 @@ if __name__ == "__main__":
 	print("Status: input received")
 	# Core Workflow
 	for group in config["groups"]:
+		print("Status: running workflow – %s" % group)
 		groupDirectory 		= group
 		queries 			= formatQuery(pathways, geneKey=group, selection=selection, organisms=organisms, type="mRNA", seqFilter="RefSeq")
 		sequenceRecords 	= getSequenceRecords(queries, evidenceLevels=evidenceLevels, db=db)

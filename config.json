@@ -2,7 +2,6 @@
     "desc": "config",
     "email": "anonymous@ohsu.edu",
     "db": "nuccore",
-    "debug": true,
     "geneDirectory": "genes",
     "outputDirectory": "output",
     "scoreDirectory": "scores",
@@ -14,7 +13,7 @@
     "organisms": [
         "homo sapiens",
         "mus musculus",
-        "pan troglodytes"
+        "gallus gallus"
     ],
     "evidenceLevels": [
         "known"
@@ -22,5 +21,7 @@
     "targetOddsThreshold": 1.2,
     "diffExpressedDataPath": "data/H5N1_VN1203_DE_Probes.txt",
     "universeDataPath": "data/H5N1_VN1203_UNIVERSE_Probes.txt",
-    "pathwaysDataPath": "data/KEGG_Pathway_Genes.txt"
+    "pathwaysDataPath": "data/KEGG_Pathway_Genes.txt",
+    "uiProgressInterval": 0.0,
+    "debug": true
 }
